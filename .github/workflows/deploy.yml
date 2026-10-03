@@ -1,0 +1,68 @@
+name: Build, test and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest          # GitHub's machine: build and test here, not on the server
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm ci --no-audit --no-fund
+      - name: Test
+        run: npm test
+      - name: Package release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release
+          cp -R src package.json package-lock.json release/
+          prohibited=$(find release -type f \( -name '.env*' -o -name '*.pem' -o -name '*.key' \) -print -quit)
+          test -z "$prohibited" || { echo "Credential file found ($prohibited); refusing upload."; exit 1; }
+          printf '%s\n' "$GITHUB_SHA" > release/COMMIT
+          tar -czf "hello-aws-$GITHUB_SHA.tar.gz" -C release .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hello-aws-${{ github.sha }}
+          path: hello-aws-${{ github.sha }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy:
+    name: Deploy to EC2
+    needs: build
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, hello-aws]   # your runner on the server
+    environment: production
+    timeout-minutes: 10
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
+        with:
+          name: hello-aws-${{ github.sha }}
+          path: release-artifact
+      - name: Deploy
+        run: bash deployment/deploy.sh "release-artifact/hello-aws-$GITHUB_SHA.tar.gz" "$GITHUB_SHA"
