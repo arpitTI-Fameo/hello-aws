@@ -11,7 +11,7 @@ export const createApp = () => {
   });
 
   app.get('/', (req, res) => {
-    res.status(200).json({ message: 'Hello from my Node.js server on AWS!' });
+    res.status(200).json({ message: 'Hello from my Express server on AWS! Deploy pipeline verified.' });
   });
 
   app.get('/api/notes', (req, res) => {
